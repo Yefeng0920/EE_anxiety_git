@@ -1,0 +1,832 @@
+---
+title: "Deduplication_code"
+output: pdf_document
+---
+
+Load packages
+```{r}
+rm(list= ls())
+pacman::p_load(tidyverse,synthesisr,tidystringdist,bibliometrix,readr,here)
+
+```
+
+
+Load in multiple sources of bib files
+
+```{r}
+#dat <- read.csv("./articles.csv")
+#dim(dat) # 3422 is the the real number of columns 
+# EOF within quoted string, using read_csv or fread to resolve it
+# https://stackoverflow.com/questions/17414776/read-csv-warning-eof-within-quoted-string-prevents-complete-reading-of-file
+
+# library(data.table)
+# data2 <- fread("articles.csv")# The class data.table has many good features, but anyway, you can transform it using as.data.frame() if needed.
+
+dat <- read_csv(here("data","EE_anxiety_with_duplicates_Rayyan_exported.csv"))
+dim(dat) # 2219
+
+```
+
+Remove all punctuation and extra white spaces
+
+```{r}
+dat$title2 <- str_replace_all(dat$title,"[:punct:]","") %>% 
+  str_replace_all(.,"[ ]+", " ") %>% 
+  tolower()
+```
+
+
+Remove exact titles 
+
+```{r}
+dat2 <- distinct(dat, title2, .keep_all = TRUE) # select records with unique titles (removes exact duplicates)
+dim(dat2) # 1655 remain 
+```
+
+Removing partial matches in titles 
+
+```{r}
+# duplicates_string <- find_duplicates(dat2$title2, method = "string_osa", to_lower = TRUE, rm_punctuation = TRUE, threshold = 7)
+
+duplicates_string <- synthesisr::find_duplicates(dat2$title2, method = "string_osa", to_lower
+= TRUE, rm_punctuation = TRUE, threshold = 7)
+```
+
+
+Manually review titles to confirm they are duplicates 
+
+```{r}
+manual_checks <- synthesisr::review_duplicates(dat2$title, duplicates_string)
+view(manual_checks)
+```
+
+Manually override some duplicates as unique 
+
+```{r}
+new_duplicates <- override_duplicates(duplicates_string, 1)
+view(new_duplicates)
+dat3 <- extract_unique_references(dat2, new_duplicates)
+dim(dat3) #1628
+names(dat3)
+```
+
+Drop columns "title2" and "n_duplicates"
+
+```{r}
+dat4 <- select(dat3, -c(title2,n_duplicates))
+dim(dat4) # 1628
+```
+
+Save de-duplicated file
+
+```{r}
+# save as csv for Rayyan abstract screening
+write_csv(dat4,here("data", "EE_anxiety_with_duplicates_Rayyan_exported_de-duplicated.csv"))
+
+# not run
+#write_refs(dat4, format = "bib", file = "ALANmap_abstracts_for_screening_deduplicated.bib")
+
+```
+
+
+
+
+```{r}
+library(namext)
+
+library(dqmagic)
+library("pdftools")
+
+x <- system.file("across taxa, biological functions, and scientific disciplines.pdf", package="namext")
+
+name_extract(x)
+
+file_type(x)
+pdf_text(x)
+
+
+x <- "across taxa, biological functions, and scientific disciplines.pdf"
+out <- name_extract(x)
+
+```
+
+
+```{r}
+# devtools::install_github("ropensci/rAltmetric") # if this fails, re-install install.packages("pkgload")
+library(rAltmetric)
+altmetric.raw <- rAltmetric::altmetrics(doi = "10.1038/465860a")
+
+
+# function getAltmetrics(), the only parameter is doi; see example below
+getAltmetrics <- function(doi = NULL,
+                          foptions = list(),
+                           ...) {
+    if (!is.null(doi)) doi <- stringr::str_c("doi/", doi)
+    identifiers <- purrr::compact(list(doi))
+    if (!is.null(identifiers)) {
+      ids <- identifiers[[1]]
+    }
+    base_url <- "http://api.altmetric.com/v1/"
+    #request <- httr::GET(paste0(base_url, ids), httr::add_headers("user-agent" = "#rstats rAltmertic package https://github.com/ropensci/rAltmetric"))
+    request <- httr::GET(paste0(base_url, ids))
+    results <-
+      jsonlite::fromJSON(httr::content(request, as = "text"), flatten = TRUE)
+    results <- rlist::list.flatten(results)
+    class(results) <- "altmetric"
+    results
+}
+# example of how to use it - the only parameter is long doi
+altmetric.crawler <- getAltmetrics(doi = "10.1111/j.1469-185X.2007.00027.x")
+# JSON format
+altmetric.crawler
+# check Altmetric score
+altmetric.crawler$score
+# convert JSON format into a dataframe if you like
+df <- data.frame(t(unlist(altmetric.crawler)), stringsAsFactors = FALSE)
+# check Altmetric score
+df$score
+# you can use write.csv() to store the dataframe 
+write.csv(df,file = "./df.csv")
+
+
+# crawl Altmetrics from multiple papers simultaneously 
+library(magrittr)
+library(purrr)
+# your doi list
+dois <- list(c(#"10.3109/07853899908998783",
+               "10.2119/molmed.2012.00077", 
+               "10.1111/cobi.12900",
+               "10.1111/brv.12036")
+             )
+# helper function
+altmetric_df <- function(altmetric.object) {
+  df <- data.frame(t(unlist(altmetric.object)), stringsAsFactors = FALSE)
+}
+# crawl
+Altmetrics.results <- pmap_df(dois, function(x) getAltmetrics(doi = x) %>% altmetric_df())
+Altmetrics.results
+write.csv(Altmetrics.results, file = "./dfs.csv")
+
+Altmetrics.results <- try(pmap_df(dois, function(x)  getAltmetrics(doi = x) %>% altmetric_df), silent=TRUE)
+
+
+DOIs <- c("10.3109/07853899908998783",
+               "10.2119/molmed.2012.00077", 
+               "10.1111/cobi.12900",
+               "10.1111/brv.12036")
+
+
+## store scrawling outputs in lists
+library(bibliometrix)
+# 2000 MA in scopus 
+bibMA <- convert2df("./MAscopus.bib", dbsource = "scopus", format = "bibtex")
+row.names(bibMA) <- 1:nrow(bibMA)
+bibMA2 <- bibMA[row.names(bibMA) %in% 1:50, ]
+
+
+
+library(readr)
+scopusShinichi <- read_csv("./scopusShinichi.csv") 
+
+altmetric.crawler <- list(NULL)
+for (n in 1:length(scopusShinichi$DOI)) {
+ # format altmetric object
+  format.Altmetric <- function(altmetric.object) {
+  stats <- altmetric.object[grep("^cited", names(altmetric.object))]
+  stats <- data.frame(stats, stringsAsFactors = FALSE)
+  data.frame(paper_title = altmetric.object$title,
+             journal = altmetric.object$journal,
+             doi = altmetric.object$doi,
+             #subject = altmetric.object$subjects,
+             Altmetric.score = altmetric.object$score,
+             stats = stats)
+}
+   # JASON formate
+  altmetric.crawler[[n]]  <-  try(list(format.Altmetric(getAltmetrics(doi = scopusShinichi$DOI[n])))) # https://stackoverflow.com/questions/14059657/how-to-skip-an-error-in-a-loop?rq=1
+  
+  # create a dataframe function
+  altmetric_df <- function(altmetric.object) {
+  df <- data.frame(t(unlist(altmetric.object)), stringsAsFactors = FALSE)
+  }
+  #altmetric.crawler[[n]]  <-  try(list(altmetric_df(getAltmetrics(doi = DOIs[n]))))
+  # create a function to summarize Altmetric object
+  summary.altmetric <- function(x, ...) {
+  if (inherits(x, "altmetric"))  {
+string <- "Altmetrics on: \"%s\" with altmetric_id: %s published in %s."
+vals   <- c(x$title,  x$altmetric_id, x$journal)
+ if("journal" %in% names(x)) {
+  cat(do.call(sprintf, as.list(c(string, vals))))
+ } else {
+   string <- "Altmetrics on: \"%s\" with altmetric_id: %s"
+   cat(do.call(sprintf, as.list(c(string, vals))))
+ }
+  cat("\n")
+  stats <- x[grep("^cited", names(x))]
+  stats <- data.frame(stats, stringsAsFactors = FALSE)
+  print(data.frame(stats = t(stats)))
+  }
+}
+  # crawl
+ # altmetric.crawler[[n]] <- try(list(summary.altmetric(getAltmetrics(doi = DOIs[n]))))
+}
+
+# save results from altmetric.crawler and retrieve lists within lists
+altmetric.crawler2 <- sapply(altmetric.crawler, function(x) {x})
+
+# retrieve stats
+all.res <- data.frame(paper_title = sapply(altmetric.crawler2, function(x)  ifelse(class(x) == "data.frame",x$paper_title,NA)),
+           journal = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$journal,NA)),
+           doi = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$doi,NA)),
+           #subject = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$subject,NA)),
+           Altmetric.score = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$Altmetric.score,0)),
+           policy = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",ifelse(!is.null(x$stats.cited_by_policies_count),x$stats.cited_by_policies_count,0),0)),
+           patent = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",ifelse(!is.null(x$stats.cited_by_patents_count),x$stats.cited_by_patents_count,0),0))
+           )
+
+# match with funding information
+all.res$funding <- scopusShinichi$`Funding Details`
+
+all.res <- all.res %>% mutate(funding.yes.no = ifelse(!is.na(funding),"with funding","without funding"))
+
+all.sum <- all.res %>% group_by(funding.yes.no) %>% 
+  summarise(Altmetric.score = mean(Altmetric.score),
+            patent = mean(patent),
+            policy = mean(policy))
+
+# sd
+all.sum.sd <-  all.res %>% group_by(funding.yes.no) %>% 
+  summarise(sd.Altmetric.score = sd(Altmetric.score),
+            sd.patent = sd(patent),
+            sd.policy = sd(policy)
+            )
+
+# combine
+merge(all.sum, all.sum.sd)
+
+
+# quasipossion
+mod.patent <- glm(patent ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+mod.policy<- glm(policy ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+mod.Altmetric.score <- glm(Altmetric.score ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+
+
+library(emmeans)
+# post-hoc tests
+# https://biostats.w.uib.no/post-hoc-tests-multiple-comparisons-in-linear-mixed-effect-models/
+# https://stats.stackexchange.com/questions/470927/r-post-hoc-test-on-lmer-emmeans-and-multcomp-packages
+# https://stats.stackexchange.com/questions/237512/how-to-perform-post-hoc-test-on-lmer-model
+emmeans(mod.patent, pairwise ~ funding.yes.no)
+emmeans(mod.policy, pairwise ~ funding.yes.no)
+emmeans(mod.Altmetric.score, pairwise ~ funding.yes.no)
+# tabulate results
+library(sjPlot)
+tab_model(mod.patent, transform = "exp")
+
+
+# negative binominal
+library(MASS)
+mod.patent2 <- glm.nb(patent ~ funding.yes.no, data = all.res)
+emmeans(mod.patent2, pairwise ~ funding.yes.no)
+
+# zero inflated distribution
+# https://stats.oarc.ucla.edu/r/dae/zip/
+# https://stats.stackexchange.com/questions/469035/zero-inflated-model-in-r-building-the-model-with-pscl-not-understanding-use-of
+library(pscl)
+
+mod.patent3 <- zeroinfl(patent ~ funding.yes.no, dist = "poisson", data = all.res)
+emmeans(mod.patent3, pairwise ~ funding.yes.no)
+
+mod.policy3 <- zeroinfl(policy ~ funding.yes.no, dist = "poisson", data = all.res)
+emmeans(mod.policy3, pairwise ~ funding.yes.no)
+
+# Fitting a zero inflated poisson distribution in R
+# https://stackoverflow.com/questions/7157158/fitting-a-zero-inflated-poisson-distribution-in-r
+# LOAD LIBRARIES
+library(fitdistrplus)    # fits distributions using maximum likelihood
+library(gamlss)          # defines pdf, cdf of ZIP
+
+# FIT DISTRIBUTION (mu = mean of poisson, sigma = P(X = 0)
+fit_zip = fitdist(all.res$policy, 'ZIP', start = list(mu = 0.001, sigma = 0.5))
+# VISUALIZE TEST AND COMPUTE GOODNESS OF FIT    
+plot(fit_zip)
+gofstat(fit_zip)
+
+# alternatively, using VGAM::*zipois() instead of gamlss.dist::*ZIP()
+# https://stackoverflow.com/questions/67782612/zero-inflated-poisson-distribution-fail-to-estimate-the-parameter-with-error-co?rq=1
+library(VGAM)
+fit_zip = fitdist(all.res$policy, 'zipois', start=list(lambda=1, pstr0=.1))
+gofstat(fit_zip)
+
+
+# original code
+    {
+    if (is.null(apikey))
+      apikey <- '37c9ae22b7979124ea650f3412255bf9'
+
+    acceptable_identifiers <- c("doi", "arxiv", "id", "pmid", "isbn", "uri")
+    # If you start hitting rate limits, email support@altmetric.com
+    # to get your own key.
+
+
+  if (all(sapply(list(oid, doi, pmid, arxiv, isbn, uri), is.null)))
+      stop("No valid identfier found. See ?altmetrics for more help", call. =
+             FALSE)
+
+    # If any of the identifiers are not prefixed by that text:
+    if (!is.null(id)) id <- prefix_fix(id, "id")
+    #if (!is.null(doi)) doi <- prefix_fix(doi, "doi")
+    if (!is.null(doi)) doi <- stringr::str_c("doi/", doi)
+    if (!is.null(isbn)) isbn <- prefix_fix(isbn, "isbn")
+    if (!is.null(uri)) uri <- prefix_fix(uri, "uri")
+    if (!is.null(arxiv)) arxiv <- prefix_fix(arxiv, "arXiv")
+    if (!is.null(pmid)) pmid <- prefix_fix(pmid, "pmid")
+
+    # remove the identifiers that weren't specified
+    #identifiers <- ee_compact(list(oid, id, doi, pmid, arxiv, isbn, uri))
+    #identifiers <- purrr::compact(list(oid, id, doi, pmid, arxiv, isbn, uri))
+identifiers <- purrr::compact(list(doi))
+    # If user specifies more than one at once, then throw an error
+    # Users should use lapply(object_list, altmetrics)
+    # to process multiple objects.
+    if (length(identifiers) > 1)
+      stop(
+        "Function can only take one object at a time. Use lapply with a list to process multiple objects",
+        call. = FALSE
+      )
+
+    if (!is.null(identifiers)) {
+      ids <- identifiers[[1]]
+    }
+
+
+    supplied_id <-
+      as.character(as.list((strsplit(ids, '/'))[[1]])[[1]])
+
+     # message(sprintf("%s", supplied_id))
+    if (!(supplied_id %in% acceptable_identifiers))
+      stop("Unknown identifier. Please use doi, pmid, isbn, uri, arxiv or id (for altmetric id).",
+           call. = F)
+    base_url <- "http://api.altmetric.com/v1/"
+    args <- list(key = apikey)
+    # request <- httr::GET(paste0(base_url, ids), query = args, foptions, httr::add_headers("user-agent" = "#rstats rAltmertic package https://github.com/ropensci/rAltmetric"))
+    request <- httr::GET(paste0(base_url, ids), httr::add_headers("user-agent" = "#rstats rAltmertic package https://github.com/ropensci/rAltmetric"))
+    
+    if(httr::status_code(request) == 404) {
+    stop("No metrics found for object")
+    } else {
+    httr::warn_for_status(request)
+    results <-
+      jsonlite::fromJSON(httr::content(request, as = "text"), flatten = TRUE)
+    results <- rlist::list.flatten(results)
+    class(results) <- "altmetric"
+    results
+
+    }
+  }
+
+res <- data.frame(t(unlist(results)), stringsAsFactors = FALSE)
+
+altmetric_data(results)
+
+
+
+
+sample_data3 <- left_join(sample_data2, Species_info[,c("species_name","broad_taxa2")], by = "species_name")
+
+
+
+
+```
+
+
+# weights in meta-analysis
+
+```{r}
+library(dplyr)
+data(corrdat, package = "robumeta")
+
+corrdat <- 
+  corrdat %>%
+  distinct(studyid, esid, .keep_all = TRUE)
+
+library(clubSandwich)
+
+corrdat <- 
+  corrdat %>%
+  group_by(studyid) %>%
+  mutate(V_bar = mean(var)) %>%
+  ungroup()
+
+V_mat <- impute_covariance_matrix(vi = corrdat$V_bar, 
+                                  cluster = corrdat$studyid,
+                                  r = 0.7)
+
+
+library(metafor)
+
+MVMA_fit <- rma.mv(yi = effectsize, V = V_mat, 
+                   random = ~ 1 | studyid / esid,
+                   data = corrdat)
+
+summary(MVMA_fit)
+
+
+W_mat <- weights(MVMA_fit, type = "matrix")
+corrdat$w_ij_metafor <- colSums(W_mat) / sum(W_mat)
+
+
+r <- 0.7
+tau_sq <- MVMA_fit$sigma2[1]
+omega_sq <- MVMA_fit$sigma2[2]
+
+corrdat_weights <- 
+  corrdat %>%
+  group_by(studyid) %>%
+  mutate(
+    n_j = n(),
+    w_ij = 1 / (n_j * tau_sq + omega_sq + (n_j - 1) * r * V_bar + V_bar)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    w_ij = w_ij / sum(w_ij)
+  )
+
+ggplot(corrdat_weights, aes(w_ij, w_ij_metafor)) + 
+  geom_point() + 
+  theme_minimal()
+
+
+MVMA_no_omega <- rma.mv(yi = effectsize, V = V_mat, 
+                        random = ~ 1 | studyid,
+                        data = corrdat)
+MVMA_no_omega
+
+
+tau_sq <- MVMA_no_omega$sigma2
+
+corrdat_weights <- 
+  corrdat_weights %>%
+  mutate(
+    w_ij_no_omega = 1 / (n_j * tau_sq + (n_j - 1) * r * V_bar + V_bar),
+    w_ij_no_omega = w_ij_no_omega / sum(w_ij_no_omega)
+  )
+
+with(corrdat_weights, weighted.mean(effectsize, w = w_ij_no_omega))
+
+
+
+dat <- data.frame(study = rep(LETTERS[1:3], 2:4), 
+                  yi = rnorm(9), 
+                  vi = 4:12)
+
+
+function (vi=dat$vi, cluster=dat$study, r=0.7, ti, ar1, smooth_vi = FALSE, subgroup = NULL, 
+  return_list = identical(as.factor(cluster), sort(as.factor(cluster))), 
+  check_PD = TRUE) 
+{
+  cluster <- droplevels(as.factor(cluster))
+  vi_list <- split(vi, cluster)
+  if (smooth_vi) 
+    vi_list <- lapply(vi_list, function(x) rep(mean(x, na.rm = TRUE), 
+      length(x)))
+  if (missing(r) & missing(ar1)) 
+    stop("You must specify a value for r or for ar1.")
+  if (!missing(r)) {
+    r_list <- rep_len(r, length(vi_list))
+    if (missing(ar1)) {
+      vcov_list <- Map(function(V, rho) (rho + diag(1 - 
+        rho, nrow = length(V))) * tcrossprod(sqrt(V)), 
+        V = vi_list, rho = r_list)
+    }
+  }
+  if (!missing(ar1)) {
+    if (missing(ti)) 
+      stop("If you specify a value for ar1, you must provide a vector for ti.")
+    ti_list <- split(ti, cluster)
+    ar_list <- rep_len(ar1, length(vi_list))
+    if (missing(r)) {
+      vcov_list <- Map(function(V, time, phi) (phi^as.matrix(stats::dist(time))) * 
+        tcrossprod(sqrt(V)), V = vi_list, time = ti_list, 
+        phi = ar_list)
+    }
+    else {
+      vcov_list <- Map(function(V, rho, time, phi) (rho + 
+        (1 - rho) * phi^as.matrix(stats::dist(time))) * 
+        tcrossprod(sqrt(V)), V = vi_list, rho = r_list, 
+        time = ti_list, phi = ar_list)
+    }
+    vcov_list <- lapply(vcov_list, function(x) {
+      attr(x, "dimnames") <- NULL
+      x
+    })
+  }
+  if (!is.null(subgroup)) {
+    si_list <- split(subgroup, cluster)
+    subgroup_list <- lapply(si_list, function(x) sapply(x, 
+      function(y) y == x))
+    vcov_list <- Map(function(V, S) V * S, V = vcov_list, 
+      S = subgroup_list)
+  }
+  if (check_PD) 
+    check_PD(vcov_list)
+  if (return_list) {
+    return(vcov_list)
+  }
+  else {
+    vcov_mat <- metafor::bldiag(vcov_list)
+    cluster_index <- order(order(cluster))
+    return(vcov_mat[cluster_index, cluster_index])
+  }
+}
+
+
+dat_scramble <- dat[sample(nrow(dat)),]
+
+V_mat <- round(impute_covariance_matrix(vi = dat_scramble$vi, cluster = dat_scramble$study, r = 0.7), 3)
+V_mat
+
+all.equal(dat_scramble$vi, diag(V_mat))
+
+```
+
+
+
+
+# retracted papers in EcoEvo
+```{r}
+# data source
+# https://osf.io/8brys/
+# https://www.nature.com/articles/s41559-022-01879-9
+
+library(readr)
+article_retractions_data <- read.csv("./article_retractions_data.csv")
+
+
+library(readxl)
+EcoEvo_MA_data <- read_excel("./EcoEvo_MA_2009-2019.xlsx")
+  
+
+altmetric.crawler <- list(NULL)
+for (n in 1:length(EcoEvo_MA_data$paper_DOI)) {
+ # format altmetric object
+  format.Altmetric <- function(altmetric.object) {
+  stats <- altmetric.object[grep("^cited", names(altmetric.object))]
+  stats <- data.frame(stats, stringsAsFactors = FALSE)
+  data.frame(paper_title = altmetric.object$title,
+             journal = altmetric.object$journal,
+             doi = altmetric.object$doi,
+             #subject = altmetric.object$subjects,
+             Altmetric.score = altmetric.object$score,
+             stats = stats)
+}
+   # JASON format
+  altmetric.crawler[[n]]  <-  try(list(format.Altmetric(getAltmetrics(doi = EcoEvo_MA_data$paper_DOI[n])))) # https://stackoverflow.com/questions/14059657/how-to-skip-an-error-in-a-loop?rq=1
+}
+
+# save results from altmetric.crawler and retrieve lists within lists
+altmetric.crawler2 <- sapply(altmetric.crawler, function(x) {x})
+
+# retrieve stats
+all.res <- data.frame(paper_title = sapply(altmetric.crawler2, function(x)  ifelse(class(x) == "data.frame",x$paper_title,NA)),
+           journal = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$journal,NA)),
+           doi = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$doi,NA)),
+           #subject = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$subject,NA)),
+           Altmetric.score = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",x$Altmetric.score,0)),
+           policy = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",ifelse(!is.null(x$stats.cited_by_policies_count),x$stats.cited_by_policies_count,0),0)),
+           patent = sapply(altmetric.crawler2, function(x) ifelse(class(x) == "data.frame",ifelse(!is.null(x$stats.cited_by_patents_count),x$stats.cited_by_patents_count,0),0))
+           )
+
+# match with funding information
+all.res$funding <- scopusShinichi$`Funding Details`
+
+all.res <- all.res %>% mutate(funding.yes.no = ifelse(!is.na(funding),"with funding","without funding"))
+
+all.sum <- all.res %>% group_by(funding.yes.no) %>% 
+  summarise(Altmetric.score = mean(Altmetric.score),
+            patent = mean(patent),
+            policy = mean(policy))
+
+# sd
+all.sum.sd <-  all.res %>% group_by(funding.yes.no) %>% 
+  summarise(sd.Altmetric.score = sd(Altmetric.score),
+            sd.patent = sd(patent),
+            sd.policy = sd(policy)
+            )
+
+# combine
+merge(all.sum, all.sum.sd)
+
+# quasipossion
+mod.patent <- glm(patent ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+mod.policy<- glm(policy ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+mod.Altmetric.score <- glm(Altmetric.score ~ funding.yes.no, family = quasipoisson(link = "log") , data = all.res)
+
+
+library(emmeans)
+# post-hoc tests
+# https://biostats.w.uib.no/post-hoc-tests-multiple-comparisons-in-linear-mixed-effect-models/
+# https://stats.stackexchange.com/questions/470927/r-post-hoc-test-on-lmer-emmeans-and-multcomp-packages
+# https://stats.stackexchange.com/questions/237512/how-to-perform-post-hoc-test-on-lmer-model
+emmeans(mod.patent, pairwise ~ funding.yes.no)
+emmeans(mod.policy, pairwise ~ funding.yes.no)
+emmeans(mod.Altmetric.score, pairwise ~ funding.yes.no)
+# tabulate results
+library(sjPlot)
+tab_model(mod.patent, transform = "exp")
+
+
+# negative binominal
+library(MASS)
+mod.patent2 <- glm.nb(patent ~ funding.yes.no, data = all.res)
+emmeans(mod.patent2, pairwise ~ funding.yes.no)
+
+# zero inflated distribution
+# https://stats.oarc.ucla.edu/r/dae/zip/
+# https://stats.stackexchange.com/questions/469035/zero-inflated-model-in-r-building-the-model-with-pscl-not-understanding-use-of
+library(pscl)
+
+mod.patent3 <- zeroinfl(patent ~ funding.yes.no, dist = "poisson", data = all.res)
+emmeans(mod.patent3, pairwise ~ funding.yes.no)
+
+mod.policy3 <- zeroinfl(policy ~ funding.yes.no, dist = "poisson", data = all.res)
+emmeans(mod.policy3, pairwise ~ funding.yes.no)
+
+
+```
+
+
+
+```{r}
+library(tidyverse)
+library(tidybayes)
+library(cmdstanr) #an interface of R to Stan, # install.packages("cmdstanr", repos = c("https://mc-stan.org/r-packages/", getOption("repos"))) # https://mc-stan.org/cmdstanr/articles/cmdstanr.html
+
+#https://www.cnblogs.com/shenchuguimo/p/14366277.html#:~:text=%E7%9B%B4%E6%8E%A5%E4%BB%8Ecmdstanr%E7%9A%84%E5%AE%98%E6%96%B9%E5%9C%B0%E5%9D%80%E4%B8%8B%E8%BD%BD%EF%BC%8C%E4%BB%A3%E7%A0%81%E5%A6%82%E4%B8%8B%EF%BC%9A%20install.packages%20%28%22cmdstanr%22%2C%20repos,%3D%20c%20%28%22https%3A%2F%2Fmc-stan.org%2Fr-packages%2F%22%2C%20getOption%20%28%22repos%22%29%29%29
+library(brms)
+library(metafor)
+library(posterior)
+library(mvtnorm)
+
+
+# Load dataset with two correlated outcomes
+dat = metadat::dat.berkey1998
+
+### construct variance-covariance matrix assuming within-study correlation = 0.5
+V = metafor::vcalc(vi, cluster=author, type=outcome, rho=0.5, data=dat)
+
+# Specify formula
+mf2 = brms::bf(yi ~ 0 + outcome + (0 + outcome|author) + fcor(V))
+
+# Fit model
+m2 = brms::brm(
+  formula = mf2,
+  prior = prior(constant(1), class = "sigma"),
+  data = dat,
+  data2 = list(V = V),
+  family = gaussian,
+  #warmup = 2000, iter = 5000,
+  chains = 2,
+  cores = 2,
+  seed = 123
+  #backend = "cmdstanr"
+)
+
+
+# Posterior predictive
+
+set.seed(214321)
+
+draws = posterior::as_draws_rvars(m2)
+
+# not all usages of diag() are implemented with rvar yet
+# (it's on my list...) so we have to do it manually
+sd = c(draws$sd_author__outcomeAL, 0, 0, draws$sd_author__outcomePD)
+dim(sd) = c(2, 2)
+
+rho = draws$cor_author__outcomeAL__outcomePD
+cor = c(rvar(1), rho, rho, rvar(1))
+dim(cor) = c(2, 2)
+
+# matrix multiplication in rvars is named `%**%` because the
+# base-R `%*%` operator has a baroque implementation that
+# doesn't play nice with S3 generics
+Sigma = sd %**% cor %**% sd
+
+mu = c(draws$b_outcomeAL, draws$b_outcomePD)
+
+# rdo() is a bit "magic" in that it detects rvars in the given
+# expression and more or less creates the loop you wrote
+# manually and then packages the results back up into an rvar
+preds = rdo(rmvnorm(1, mu, Sigma))
+
+data.frame(
+    "Outcome" = c("AL", "PD"),
+    "Marginal Posterior Draws" = c(draws$b_outcomeAL, draws$b_outcomePD),
+    "Posterior Predictive" = c(preds)
+  ) %>%
+  tidyr::pivot_longer(2:3) %>%
+  ggplot() +
+  aes(dist = value, y = Outcome, fill = name) +
+  ggdist::stat_dist_slab(alpha = 0.5) +
+  ggdist::stat_dist_pointinterval(
+    aes(color = name), 
+    position = position_dodge(width = 0.4, preserve = "single")
+  ) +
+  scale_color_brewer(palette = "Dark2", aesthetics = c("fill", "color"))
+
+```
+
+
+```{r}
+library(mice)
+dat <- read.csv(url("http://goo.gl/19NKXV"), header=TRUE, sep=",")
+head(dat)
+sapply(dat, function(x) sum(is.na(x)))
+original <- dat
+set.seed(100)
+dat[sample(1:nrow(dat), 20), "Cholesterol"] <- NA
+dat[sample(1:nrow(dat), 20), "Smoking"] <- NA
+dat[sample(1:nrow(dat), 20), "Education"] <- NA
+dat[sample(1:nrow(dat), 5), "Age"] <- NA
+dat[sample(1:nrow(dat), 5), "BMI"] <- NA
+sapply(dat, function(x) sum(is.na(x)))
+
+library(dplyr) 
+dat <- dat %>%
+    mutate(Smoking = as.factor(Smoking)) %>% 
+    mutate(Education = as.factor(Education)) %>% 
+    mutate(Cholesterol = as.numeric(Cholesterol))
+str(dat)
+
+init = mice(dat, maxit=0) 
+meth = init$method
+predM = init$predictorMatrix
+predM[c("BMI")]=0
+
+meth[c("Age")]=""
+meth[c("Cholesterol")]="norm" 
+meth[c("Smoking")]="logreg" 
+meth[c("Education")]="polyreg"
+
+set.seed(103)
+imputed = mice(dat, method=meth, predictorMatrix=predM, m=5)
+imputed <- mice::complete(imputed)
+sapply(dat, function(x) sum(is.na(x)))
+
+# Cholesterol
+actual <- original$Cholesterol[is.na(dat$Cholesterol)]
+predicted <- imputed$Cholesterol[is.na(dat$Cholesterol)]
+mean(actual)
+mean(predicted)
+# Smoking
+actual <- original$Smoking[is.na(dat$Smoking)] 
+predicted <- imputed$Smoking[is.na(dat$Smoking)] 
+table(actual)
+table(predicted)
+
+```
+
+```{r}
+library(metafor)
+dat <- dat.bangertdrowns2004
+rbind(head(dat, 10), tail(dat, 10))
+dat <- dat[c("yi", "vi", "length", "wic", "feedback", "info", "pers", "imag", "meta")]
+data.frame(k.NA=colSums(is.na(dat)))
+table(rowSums(is.na(dat)))
+res <- rma(yi, vi, mods = ~ length + wic + feedback + info + pers + imag + meta, data=dat)
+res
+dat$wic      <- factor(dat$wic)
+dat$feedback <- factor(dat$feedback)
+dat$info     <- factor(dat$info)
+dat$pers     <- factor(dat$pers)
+dat$imag     <- factor(dat$imag)
+dat$meta     <- factor(dat$meta)
+predMatrix <- make.predictorMatrix(dat)
+predMatrix
+predMatrix[,"vi"] <- 0 # don't use vi for imputing
+predMatrix["yi",] <- 0 # don't impute yi (since yi has no NAs, this is actually irrelevant here)
+predMatrix["vi",] <- 0 # don't impute vi (since vi has no NAs, this is actually irrelevant here)
+predMatrix
+impMethod <- make.method(dat)
+impMethod
+
+imp <- mice(dat, print=FALSE, m=20, predictorMatrix=predMatrix, method=impMethod, seed=1234)
+fit <- with(imp, rma(yi, vi, mods = ~ length + wic + feedback + info + pers + imag + meta))
+pool <- summary(pool(fit))
+pool[-1] <- round(pool[-1], digits=4)
+
+
+imputed <- mice::complete(imp)
+sapply(imputed, function(x) sum(is.na(x)))
+
+actual <- dat$length[!is.na(dat$length)] 
+predicted <- imputed$length[!is.na(imputed$length)] 
+mean(actual)
+mean(predicted)
+
+actual <- dat$wic[!is.na(dat$wic)] 
+predicted <- imputed$wic[!is.na(imputed$wic)] 
+table(actual)
+table(predicted)
+```
+
